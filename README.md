@@ -1,19 +1,21 @@
 # Simple Bank
 
-A backend service for a simple bank, written in Go with PostgreSQL. It is still early: the project currently has the database schema, migrations, and type-safe Go query code generated with [sqlc](https://sqlc.dev).
+A backend service for a simple bank, written in Go with PostgreSQL. It is still early: the project currently has the database schema, migrations, and type-safe Go CRUD queries for accounts, entries, and transfers generated with [sqlc](https://sqlc.dev).
+
+Module path: `github.com/hosseinbanaei/simaplebank`
 
 ## Features
 
 - Database schema for accounts, balance entries, and transfers between accounts
 - Versioned up/down migrations managed with [golang-migrate](https://github.com/golang-migrate/migrate)
-- Go code generated from SQL queries with sqlc
+- Go code generated from SQL queries with sqlc (create, get, list, update, delete)
 - Makefile targets for running PostgreSQL in Docker and managing the database
 
 ## Tech Stack
 
 | Component        | Tool                      |
 | ---------------- | ------------------------- |
-| Language         | Go                        |
+| Language         | Go 1.27.1                 |
 | Database         | PostgreSQL (`postgres:alpine` Docker image) |
 | Migrations       | golang-migrate            |
 | Query generation | sqlc (v1.31.1)            |
@@ -23,6 +25,7 @@ A backend service for a simple bank, written in Go with PostgreSQL. It is still 
 
 ```
 .
+├── go.mod                   # Go module definition
 ├── Makefile                 # Database and code-generation tasks
 ├── sqlc.yml                 # sqlc configuration
 └── db/
@@ -30,11 +33,15 @@ A backend service for a simple bank, written in Go with PostgreSQL. It is still 
     │   ├── 000001_init_schema.up.sql
     │   └── 000001_init_schema.down.sql
     ├── query/               # SQL queries used by sqlc
-    │   └── account.sql
+    │   ├── account.sql
+    │   ├── entry.sql
+    │   └── transfer.sql
     └── sqlc/                # Generated Go code (do not edit by hand)
         ├── db.go
         ├── models.go
-        └── account.sql.go
+        ├── account.sql.go
+        ├── entry.sql.go
+        └── transfer.sql.go
 ```
 
 ## Database Schema
@@ -52,7 +59,7 @@ A backend service for a simple bank, written in Go with PostgreSQL. It is still 
 ## Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/)
-- [Go](https://go.dev/dl/)
+- [Go](https://go.dev/dl/) 1.27.1 or later
 - [golang-migrate CLI](https://github.com/golang-migrate/migrate/tree/master/cmd/migrate)
 - [sqlc](https://docs.sqlc.dev/en/latest/overview/install.html)
 - `make`
@@ -100,9 +107,21 @@ make sqlc
 
 Available queries:
 
-| Query           | Description                                           |
-| --------------- | ----------------------------------------------------- |
-| `CreateAccount` | Insert an account (`owner`, `balance`, `currency`) and return the created row |
+| Query            | File           | Description                                                         |
+| ---------------- | -------------- | ------------------------------------------------------------------- |
+| `CreateAccount`  | `account.sql`  | Insert an account (`owner`, `balance`, `currency`) and return it    |
+| `GetAccount`     | `account.sql`  | Get an account by `id`                                              |
+| `ListAccounts`   | `account.sql`  | List accounts ordered by `id`, paginated with `limit` / `offset`    |
+| `UpdateAccount`  | `account.sql`  | Set an account's `balance` by `id` and return the updated row       |
+| `DeleteAccount`  | `account.sql`  | Delete an account by `id`                                           |
+| `CreateEntry`    | `entry.sql`    | Insert an entry (`account_id`, `amount`) and return it              |
+| `GetEntry`       | `entry.sql`    | Get an entry by `id`                                                |
+| `ListEntries`    | `entry.sql`    | List an account's entries ordered by `id`, paginated                |
+| `CreateTransfer` | `transfer.sql` | Insert a transfer (`from_account_id`, `to_account_id`, `amount`) and return it |
+| `GetTransfer`    | `transfer.sql` | Get a transfer by `id`                                              |
+| `ListTransfers`  | `transfer.sql` | List transfers where `from_account_id` or `to_account_id` matches the given values, ordered by `id`, paginated |
+
+These queries are plain database operations. They do not yet enforce business rules such as checking balances or moving money atomically between accounts.
 
 Example usage of the generated code:
 
@@ -118,5 +137,5 @@ account, err := queries.CreateAccount(ctx, db.CreateAccountParams{
 
 ## Current Status
 
-- Schema, migrations, and the `CreateAccount` query are in place.
-- There is no Go module (`go.mod`), application entry point, or test suite yet.
+- Schema, migrations, Go module, and CRUD queries for accounts, entries, and transfers are in place.
+- There is no application entry point or test suite yet.
