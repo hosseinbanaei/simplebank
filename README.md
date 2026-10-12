@@ -1,6 +1,6 @@
 # Simple Bank
 
-A backend service for a simple bank, written in Go with PostgreSQL. It is still early: the project currently has the database schema, migrations, and type-safe Go CRUD queries for accounts, entries, and transfers generated with [sqlc](https://sqlc.dev).
+A backend service for a simple bank, written in Go with PostgreSQL. It is still early: the project currently has the database schema, migrations, and type-safe Go CRUD queries for accounts, entries, and transfers generated with [sqlc](https://sqlc.dev), plus a transactional money transfer between accounts.
 
 Module path: `github.com/hosseinbanaei/simaplebank`
 
@@ -9,6 +9,7 @@ Module path: `github.com/hosseinbanaei/simaplebank`
 - Database schema for accounts, balance entries, and transfers between accounts
 - Versioned up/down migrations managed with [golang-migrate](https://github.com/golang-migrate/migrate)
 - Go code generated from SQL queries with sqlc (create, get, list, update, delete)
+- Money transfer that records the transfer, both entries, and both balance updates in one database transaction
 - Integration tests for every query, run against a real PostgreSQL database
 - Makefile targets for running PostgreSQL in Docker, managing the database, and running tests
 
@@ -47,10 +48,12 @@ Module path: `github.com/hosseinbanaei/simaplebank`
         ├── account.sql.go
         ├── entry.sql.go
         ├── transfer.sql.go
+        ├── store.go         # Store with transaction support and TransferTx
         ├── main_test.go     # Opens the test database connection
         ├── account_test.go
         ├── entry_test.go
-        └── transfer_test.go
+        ├── transfer_test.go
+        └── store_test.go
 ```
 
 ## Database Schema
@@ -121,8 +124,10 @@ Available queries:
 | ---------------- | -------------- | ------------------------------------------------------------------- |
 | `CreateAccount`  | `account.sql`  | Insert an account (`owner`, `balance`, `currency`) and return it    |
 | `GetAccount`     | `account.sql`  | Get an account by `id`                                              |
+| `GetAccountForUpdate` | `account.sql` | Get an account by `id` and lock its row (`SELECT ... FOR UPDATE`) until the transaction ends |
 | `ListAccounts`   | `account.sql`  | List accounts ordered by `id`, paginated with `limit` / `offset`    |
 | `UpdateAccount`  | `account.sql`  | Set an account's `balance` by `id` and return the updated row       |
+| `AddAccountBalance` | `account.sql` | Add `amount` (positive or negative) to an account's `balance` by `id` and return the updated row |
 | `DeleteAccount`  | `account.sql`  | Delete an account by `id`                                           |
 | `CreateEntry`    | `entry.sql`    | Insert an entry (`account_id`, `amount`) and return it              |
 | `GetEntry`       | `entry.sql`    | Get an entry by `id`                                                |
@@ -131,7 +136,7 @@ Available queries:
 | `GetTransfer`    | `transfer.sql` | Get a transfer by `id`                                              |
 | `ListTransfers`  | `transfer.sql` | List transfers where `from_account_id` or `to_account_id` matches the given values, ordered by `id`, paginated |
 
-These queries are plain database operations. They do not yet enforce business rules such as checking balances or moving money atomically between accounts.
+These queries are plain database operations and do not enforce business rules on their own. Atomic money transfers are handled by the store described below.
 
 Example usage of the generated code:
 
@@ -144,6 +149,39 @@ account, err := queries.CreateAccount(ctx, db.CreateAccountParams{
 	Currency: "USD",
 })
 ```
+
+## Transactions
+
+`db/sqlc/store.go` defines `Store`, which embeds `*Queries` (so every query is available on it) and adds transaction support:
+
+- `NewStore(db *sql.DB)` creates a store from a database connection.
+- `execTx` runs a function with a `*Queries` bound to a new transaction. It commits if the function succeeds and rolls back if it returns an error.
+- `TransferTx` moves `amount` from `FromAccountID` to `ToAccountID` in a single transaction. It:
+  1. creates a `transfers` row,
+  2. creates an entry of `-amount` for the source account,
+  3. creates an entry of `+amount` for the destination account,
+  4. subtracts `amount` from the source account's balance,
+  5. adds `amount` to the destination account's balance.
+
+  It returns a `TransferTxResult` with the transfer, both entries, and both updated accounts.
+
+```go
+store := db.NewStore(conn) // conn is a *sql.DB
+
+result, err := store.TransferTx(ctx, db.TransferTxParams{
+	FromAccountID: 1,
+	ToAccountID:   2,
+	Amount:        10,
+})
+```
+
+Balances are updated with a single `UPDATE ... SET balance = balance + amount` statement (`AddAccountBalance`), so concurrent transfers from the same account do not overwrite each other's changes.
+
+`TransferTx` does not yet:
+
+- check that the source account has enough balance (balances can become negative),
+- check that both accounts use the same currency,
+- update the two accounts in a consistent order, so concurrent transfers in opposite directions between the same two accounts may deadlock.
 
 ## Testing
 
@@ -160,9 +198,11 @@ Tests create accounts, entries, and transfers with random data from the `util` p
 | `account_test.go`  | Create, get, update, delete, and list accounts                          |
 | `entry_test.go`    | Create, get, and list entries for an account                            |
 | `transfer_test.go` | Create, get, and list transfers involving an account in either direction |
+| `store_test.go`    | `TransferTx` with 5 concurrent transfers in one direction: checks each result and the final balances |
 
 ## Current Status
 
 - Schema, migrations, Go module, and CRUD queries for accounts, entries, and transfers are in place.
-- All queries have integration tests.
+- `TransferTx` performs a money transfer in a single transaction.
+- All queries and `TransferTx` have integration tests.
 - There is no application entry point yet.
