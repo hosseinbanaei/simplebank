@@ -163,6 +163,8 @@ account, err := queries.CreateAccount(ctx, db.CreateAccountParams{
   4. subtracts `amount` from the source account's balance,
   5. adds `amount` to the destination account's balance.
 
+  Steps 4 and 5 always update the account with the smaller `id` first (via the `addMoney` helper), whichever direction the money moves. Because every transaction locks the two account rows in the same order, concurrent transfers in opposite directions between the same two accounts do not deadlock.
+
   It returns a `TransferTxResult` with the transfer, both entries, and both updated accounts.
 
 ```go
@@ -179,9 +181,8 @@ Balances are updated with a single `UPDATE ... SET balance = balance + amount` s
 
 `TransferTx` does not yet:
 
-- check that the source account has enough balance (balances can become negative),
-- check that both accounts use the same currency,
-- update the two accounts in a consistent order, so concurrent transfers in opposite directions between the same two accounts may deadlock.
+- check that the source account has enough balance (balances can become negative), or
+- check that both accounts use the same currency.
 
 ## Testing
 
@@ -198,7 +199,7 @@ Tests create accounts, entries, and transfers with random data from the `util` p
 | `account_test.go`  | Create, get, update, delete, and list accounts                          |
 | `entry_test.go`    | Create, get, and list entries for an account                            |
 | `transfer_test.go` | Create, get, and list transfers involving an account in either direction |
-| `store_test.go`    | `TransferTx` with 5 concurrent transfers in one direction: checks each result and the final balances |
+| `store_test.go`    | `TransferTx` with 5 concurrent transfers in one direction (checks each result and the final balances), and 10 concurrent transfers alternating between both directions (checks there is no deadlock and the balances end unchanged) |
 
 ## Current Status
 
