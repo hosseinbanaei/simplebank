@@ -9,7 +9,8 @@ Module path: `github.com/hosseinbanaei/simaplebank`
 - Database schema for accounts, balance entries, and transfers between accounts
 - Versioned up/down migrations managed with [golang-migrate](https://github.com/golang-migrate/migrate)
 - Go code generated from SQL queries with sqlc (create, get, list, update, delete)
-- Makefile targets for running PostgreSQL in Docker and managing the database
+- Integration tests for every query, run against a real PostgreSQL database
+- Makefile targets for running PostgreSQL in Docker, managing the database, and running tests
 
 ## Tech Stack
 
@@ -19,15 +20,19 @@ Module path: `github.com/hosseinbanaei/simaplebank`
 | Database         | PostgreSQL (`postgres:alpine` Docker image) |
 | Migrations       | golang-migrate            |
 | Query generation | sqlc (v1.31.1)            |
+| Database driver  | [lib/pq](https://github.com/lib/pq) |
+| Testing          | Go `testing` + [testify](https://github.com/stretchr/testify) |
 | Task runner      | Make                      |
 
 ## Project Structure
 
 ```
 .
-├── go.mod                   # Go module definition
+├── go.mod / go.sum          # Go module definition and dependencies
 ├── Makefile                 # Database and code-generation tasks
 ├── sqlc.yml                 # sqlc configuration
+├── util/
+│   └── random.go            # Random test data helpers
 └── db/
     ├── migration/           # SQL migrations (golang-migrate)
     │   ├── 000001_init_schema.up.sql
@@ -36,12 +41,16 @@ Module path: `github.com/hosseinbanaei/simaplebank`
     │   ├── account.sql
     │   ├── entry.sql
     │   └── transfer.sql
-    └── sqlc/                # Generated Go code (do not edit by hand)
+    └── sqlc/                # Generated Go code (*.sql.go, db.go, models.go) and tests
         ├── db.go
         ├── models.go
         ├── account.sql.go
         ├── entry.sql.go
-        └── transfer.sql.go
+        ├── transfer.sql.go
+        ├── main_test.go     # Opens the test database connection
+        ├── account_test.go
+        ├── entry_test.go
+        └── transfer_test.go
 ```
 
 ## Database Schema
@@ -96,6 +105,7 @@ The Makefile uses the local development credentials `root` / `root`. They are me
 | `make migrateup`   | Apply all up migrations                             |
 | `make migratedown` | Roll back all migrations                            |
 | `make sqlc`        | Regenerate Go code from `db/query` with sqlc        |
+| `make test`        | Run all tests with verbose output and coverage      |
 
 ## Database Queries
 
@@ -135,7 +145,24 @@ account, err := queries.CreateAccount(ctx, db.CreateAccountParams{
 })
 ```
 
+## Testing
+
+The tests in `db/sqlc` are integration tests: they run every query against the `simple_bank` database at `postgresql://root:root@localhost:5432/simple_bank?sslmode=disable`, which is set in `db/sqlc/main_test.go`. Start the database and apply the migrations first (see [Getting Started](#getting-started)), then run:
+
+```sh
+make test
+```
+
+Tests create accounts, entries, and transfers with random data from the `util` package and do not clean them up afterwards, so use a local development database only.
+
+| Test file          | Covers                                                                  |
+| ------------------ | ----------------------------------------------------------------------- |
+| `account_test.go`  | Create, get, update, delete, and list accounts                          |
+| `entry_test.go`    | Create, get, and list entries for an account                            |
+| `transfer_test.go` | Create, get, and list transfers involving an account in either direction |
+
 ## Current Status
 
 - Schema, migrations, Go module, and CRUD queries for accounts, entries, and transfers are in place.
-- There is no application entry point or test suite yet.
+- All queries have integration tests.
+- There is no application entry point yet.
