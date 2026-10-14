@@ -1,6 +1,6 @@
 # Simple Bank
 
-A backend service for a simple bank, written in Go with PostgreSQL. It is still early: the project currently has the database schema, migrations, and type-safe Go CRUD queries for accounts, entries, and transfers generated with [sqlc](https://sqlc.dev), plus a transactional money transfer between accounts.
+A backend service for a simple bank, written in Go with PostgreSQL. It is still early: the project currently has the database schema, migrations, and type-safe Go CRUD queries for accounts, entries, and transfers generated with [sqlc](https://sqlc.dev), plus a transactional money transfer between accounts and an HTTP JSON API for creating, getting, and listing accounts.
 
 Module path: `github.com/hosseinbanaei/simaplebank`
 
@@ -10,8 +10,10 @@ Module path: `github.com/hosseinbanaei/simaplebank`
 - Versioned up/down migrations managed with [golang-migrate](https://github.com/golang-migrate/migrate)
 - Go code generated from SQL queries with sqlc (create, get, list, update, delete)
 - Money transfer that records the transfer, both entries, and both balance updates in one database transaction
+- HTTP JSON API built with [Gin](https://github.com/gin-gonic/gin) for creating, getting, and listing accounts
 - Integration tests for every query, run against a real PostgreSQL database
-- Makefile targets for running PostgreSQL in Docker, managing the database, and running tests
+- GitHub Actions workflow that runs the migrations and tests on every push and pull request to `main`
+- Makefile targets for running PostgreSQL in Docker, managing the database, running tests, and starting the server
 
 ## Tech Stack
 
@@ -21,17 +23,25 @@ Module path: `github.com/hosseinbanaei/simaplebank`
 | Database         | PostgreSQL (`postgres:alpine` Docker image) |
 | Migrations       | golang-migrate            |
 | Query generation | sqlc (v1.31.1)            |
+| HTTP framework   | [Gin](https://github.com/gin-gonic/gin) v1.12.0 |
 | Database driver  | [lib/pq](https://github.com/lib/pq) |
 | Testing          | Go `testing` + [testify](https://github.com/stretchr/testify) |
 | Task runner      | Make                      |
+| CI               | GitHub Actions            |
 
 ## Project Structure
 
 ```
 .
+├── .github/workflows/
+│   └── test.yml             # CI: run migrations and tests
+├── main.go                  # Application entry point (HTTP server)
 ├── go.mod / go.sum          # Go module definition and dependencies
-├── Makefile                 # Database and code-generation tasks
+├── Makefile                 # Database, code-generation, test, and server tasks
 ├── sqlc.yml                 # sqlc configuration
+├── api/
+│   ├── server.go            # Gin router and route registration
+│   └── account.go           # Account handlers
 ├── util/
 │   └── random.go            # Random test data helpers
 └── db/
@@ -109,6 +119,78 @@ The Makefile uses the local development credentials `root` / `root`. They are me
 | `make migratedown` | Roll back all migrations                            |
 | `make sqlc`        | Regenerate Go code from `db/query` with sqlc        |
 | `make test`        | Run all tests with verbose output and coverage      |
+| `make server`      | Start the HTTP server on port 4000                  |
+
+## HTTP API
+
+Start the database and apply the migrations (see [Getting Started](#getting-started)), then run:
+
+```sh
+make server
+```
+
+The server listens on `0.0.0.0:4000` and connects to `postgresql://root:root@localhost:5432/simple_bank?sslmode=disable`. Both values are constants in `main.go`.
+
+| Method | Path            | Description                     |
+| ------ | --------------- | ------------------------------- |
+| `POST` | `/accounts`     | Create an account               |
+| `GET`  | `/accounts/:id` | Get an account by `id`          |
+| `GET`  | `/accounts`     | List accounts, one page at a time |
+
+### `POST /accounts`
+
+Request body:
+
+| Field      | Type   | Rules                            |
+| ---------- | ------ | -------------------------------- |
+| `owner`    | string | Required                         |
+| `currency` | string | Required; one of `USD`, `EUR`, `CAD` |
+
+New accounts always start with a balance of `0`.
+
+```sh
+curl -X POST localhost:4000/accounts -d '{"owner":"alice","currency":"USD"}'
+```
+
+```json
+{"id":1,"owner":"alice","balance":0,"currency":"USD","created_at":"2026-10-14T09:01:22.395181Z"}
+```
+
+### `GET /accounts/:id`
+
+`id` must be an integer of at least `1`.
+
+```sh
+curl localhost:4000/accounts/1
+```
+
+Returns the account, or `404` if it does not exist.
+
+### `GET /accounts`
+
+Query parameters:
+
+| Parameter   | Rules                          |
+| ----------- | ------------------------------ |
+| `page_id`   | Required; at least `1`         |
+| `page_size` | Required; between `5` and `10` |
+
+```sh
+curl 'localhost:4000/accounts?page_id=1&page_size=5'
+```
+
+Returns a JSON array of accounts ordered by `id`.
+
+### Responses
+
+| Status | When                                                  |
+| ------ | ----------------------------------------------------- |
+| `200`  | Success                                               |
+| `400`  | The request body, path, or query fails validation     |
+| `404`  | `GET /accounts/:id` finds no account                  |
+| `500`  | A database error                                      |
+
+Errors are returned as `{"error": "<message>"}`, where the message is the underlying Go error text.
 
 ## Database Queries
 
@@ -201,9 +283,15 @@ Tests create accounts, entries, and transfers with random data from the `util` p
 | `transfer_test.go` | Create, get, and list transfers involving an account in either direction |
 | `store_test.go`    | `TransferTx` with 5 concurrent transfers in one direction (checks each result and the final balances), and 10 concurrent transfers alternating between both directions (checks there is no deadlock and the balances end unchanged) |
 
+## Continuous Integration
+
+`.github/workflows/test.yml` runs on every push and pull request to `main`. It starts a `postgres:alpine` service with the `simple_bank` database, installs golang-migrate v4.20.1, runs `make migrateup`, and then runs `make test`.
+
 ## Current Status
 
 - Schema, migrations, Go module, and CRUD queries for accounts, entries, and transfers are in place.
 - `TransferTx` performs a money transfer in a single transaction.
-- All queries and `TransferTx` have integration tests.
-- There is no application entry point yet.
+- An HTTP API can create, get, and list accounts.
+- All queries and `TransferTx` have integration tests, which run in CI. The HTTP API has no tests yet.
+- There are no API endpoints yet for transfers, entries, updating, or deleting accounts.
+- The database address and server address are hard-coded in `main.go` and `db/sqlc/main_test.go`.
