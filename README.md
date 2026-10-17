@@ -38,7 +38,7 @@ Module path: `github.com/hosseinbanaei/simaplebank`
 ├── .github/workflows/
 │   └── test.yml             # CI: run migrations and tests
 ├── main.go                  # Application entry point (HTTP server)
-├── app.env                  # Local configuration (not committed, see Configuration)
+├── app.env                  # Local development configuration (see Configuration)
 ├── go.mod / go.sum          # Go module definition and dependencies
 ├── Makefile                 # Database, code-generation, test, and server tasks
 ├── sqlc.yml                 # sqlc configuration
@@ -110,9 +110,7 @@ Module path: `github.com/hosseinbanaei/simaplebank`
    make migrateup
    ```
 
-4. Create `app.env` in the project root (see [Configuration](#configuration)).
-
-The Makefile uses the local development credentials `root` / `root`. They are meant only for a local container; do not reuse them anywhere else.
+The Makefile and `app.env` use the local development credentials `root` / `root`. They are meant only for a local container; do not reuse them anywhere else.
 
 ## Configuration
 
@@ -124,7 +122,7 @@ The server and the tests read their settings with `util.LoadConfig`, which loads
 | `DB_SOURCE`      | PostgreSQL connection string        | `postgresql://root:root@localhost:5432/simple_bank?sslmode=disable` |
 | `SERVER_ADDRESS` | Address the HTTP server listens on  | `0.0.0.0:4000`                                                      |
 
-Example `app.env` for the local Docker database:
+The committed `app.env` points at the local Docker database:
 
 ```env
 DB_DRIVER=postgres
@@ -134,7 +132,7 @@ SERVER_ADDRESS=0.0.0.0:4000
 
 - `main.go` looks for `app.env` in the current directory, so run the server from the project root.
 - `db/sqlc/main_test.go` looks for it two directories up, which is the project root.
-- `*.env` files are listed in `.gitignore` and are not committed, so each environment has to provide its own `app.env`.
+- `app.env` is committed to the repository and holds only local development values. To use other values, for example in production, set the variables in the environment instead of editing the file.
 - The file must exist: `LoadConfig` returns an error when `app.env` is missing, even if all variables are set in the environment.
 
 ## Makefile Commands
@@ -297,7 +295,7 @@ Balances are updated with a single `UPDATE ... SET balance = balance + amount` s
 
 ## Testing
 
-The tests in `db/sqlc` are integration tests: they run every query against the database at `DB_SOURCE` from `app.env` (see [Configuration](#configuration)). Start the database, apply the migrations, and create `app.env` first (see [Getting Started](#getting-started)), then run:
+The tests in `db/sqlc` are integration tests: they run every query against the database at `DB_SOURCE` from `app.env` (see [Configuration](#configuration)). Start the database and apply the migrations first (see [Getting Started](#getting-started)), then run:
 
 ```sh
 make test
@@ -314,9 +312,7 @@ Tests create accounts, entries, and transfers with random data from the `util` p
 
 ## Continuous Integration
 
-`.github/workflows/test.yml` runs on every push and pull request to `main`. It starts a `postgres:alpine` service with the `simple_bank` database, installs golang-migrate v4.20.1, runs `make migrateup`, and then runs `make test`.
-
-The workflow does not create `app.env`. Because the file is not committed and `LoadConfig` requires it, `make test` fails in CI until the workflow provides one.
+`.github/workflows/test.yml` runs on every push and pull request to `main`. It starts a `postgres:alpine` service with the `simple_bank` database, installs golang-migrate v4.20.1, runs `make migrateup`, and then runs `make test`. The tests read their settings from the committed `app.env`, which matches the CI database.
 
 ## Current Status
 
@@ -325,4 +321,3 @@ The workflow does not create `app.env`. Because the file is not committed and `L
 - An HTTP API can create, get, and list accounts.
 - All queries and `TransferTx` have integration tests, which run in CI. The HTTP API has no tests yet.
 - There are no API endpoints yet for transfers, entries, updating, or deleting accounts.
-- The CI workflow does not provide `app.env` yet, so the tests fail in CI.
