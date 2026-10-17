@@ -13,6 +13,7 @@ Module path: `github.com/hosseinbanaei/simaplebank`
 - HTTP JSON API built with [Gin](https://github.com/gin-gonic/gin) for creating, getting, and listing accounts
 - Integration tests for every query, run against a real PostgreSQL database
 - GitHub Actions workflow that runs the migrations and tests on every push and pull request to `main`
+- Configuration loaded from an `app.env` file or environment variables with [Viper](https://github.com/spf13/viper)
 - Makefile targets for running PostgreSQL in Docker, managing the database, running tests, and starting the server
 
 ## Tech Stack
@@ -26,6 +27,7 @@ Module path: `github.com/hosseinbanaei/simaplebank`
 | HTTP framework   | [Gin](https://github.com/gin-gonic/gin) v1.12.0 |
 | Database driver  | [lib/pq](https://github.com/lib/pq) |
 | Testing          | Go `testing` + [testify](https://github.com/stretchr/testify) |
+| Configuration    | [Viper](https://github.com/spf13/viper) v1.21.0 |
 | Task runner      | Make                      |
 | CI               | GitHub Actions            |
 
@@ -36,6 +38,7 @@ Module path: `github.com/hosseinbanaei/simaplebank`
 ├── .github/workflows/
 │   └── test.yml             # CI: run migrations and tests
 ├── main.go                  # Application entry point (HTTP server)
+├── app.env                  # Local configuration (not committed, see Configuration)
 ├── go.mod / go.sum          # Go module definition and dependencies
 ├── Makefile                 # Database, code-generation, test, and server tasks
 ├── sqlc.yml                 # sqlc configuration
@@ -43,6 +46,7 @@ Module path: `github.com/hosseinbanaei/simaplebank`
 │   ├── server.go            # Gin router and route registration
 │   └── account.go           # Account handlers
 ├── util/
+│   ├── config.go            # Loads configuration with Viper
 │   └── random.go            # Random test data helpers
 └── db/
     ├── migration/           # SQL migrations (golang-migrate)
@@ -106,7 +110,32 @@ Module path: `github.com/hosseinbanaei/simaplebank`
    make migrateup
    ```
 
+4. Create `app.env` in the project root (see [Configuration](#configuration)).
+
 The Makefile uses the local development credentials `root` / `root`. They are meant only for a local container; do not reuse them anywhere else.
+
+## Configuration
+
+The server and the tests read their settings with `util.LoadConfig`, which loads a file named `app.env` and lets environment variables with the same names override its values.
+
+| Variable         | Description                         | Local value                                                         |
+| ---------------- | ----------------------------------- | ------------------------------------------------------------------- |
+| `DB_DRIVER`      | `database/sql` driver name          | `postgres`                                                          |
+| `DB_SOURCE`      | PostgreSQL connection string        | `postgresql://root:root@localhost:5432/simple_bank?sslmode=disable` |
+| `SERVER_ADDRESS` | Address the HTTP server listens on  | `0.0.0.0:4000`                                                      |
+
+Example `app.env` for the local Docker database:
+
+```env
+DB_DRIVER=postgres
+DB_SOURCE=postgresql://root:root@localhost:5432/simple_bank?sslmode=disable
+SERVER_ADDRESS=0.0.0.0:4000
+```
+
+- `main.go` looks for `app.env` in the current directory, so run the server from the project root.
+- `db/sqlc/main_test.go` looks for it two directories up, which is the project root.
+- `*.env` files are listed in `.gitignore` and are not committed, so each environment has to provide its own `app.env`.
+- The file must exist: `LoadConfig` returns an error when `app.env` is missing, even if all variables are set in the environment.
 
 ## Makefile Commands
 
@@ -129,7 +158,7 @@ Start the database and apply the migrations (see [Getting Started](#getting-star
 make server
 ```
 
-The server listens on `0.0.0.0:4000` and connects to `postgresql://root:root@localhost:5432/simple_bank?sslmode=disable`. Both values are constants in `main.go`.
+The server listens on `SERVER_ADDRESS` and connects to the database at `DB_SOURCE` (see [Configuration](#configuration)). The examples below use the local value `0.0.0.0:4000`.
 
 | Method | Path            | Description                     |
 | ------ | --------------- | ------------------------------- |
@@ -179,7 +208,7 @@ Query parameters:
 curl 'localhost:4000/accounts?page_id=1&page_size=5'
 ```
 
-Returns a JSON array of accounts ordered by `id`.
+Returns a JSON array of accounts ordered by `id`. A page with no accounts returns `[]`.
 
 ### Responses
 
@@ -194,7 +223,7 @@ Errors are returned as `{"error": "<message>"}`, where the message is the underl
 
 ## Database Queries
 
-Queries are written in `db/query/*.sql` and compiled by sqlc into the `db` package in `db/sqlc`. After adding or changing a query, run:
+Queries are written in `db/query/*.sql` and compiled by sqlc into the `db` package in `db/sqlc`. List queries return an empty slice instead of `nil` when there are no rows (`emit_empty_slices` in `sqlc.yml`). After adding or changing a query, run:
 
 ```sh
 make sqlc
@@ -268,7 +297,7 @@ Balances are updated with a single `UPDATE ... SET balance = balance + amount` s
 
 ## Testing
 
-The tests in `db/sqlc` are integration tests: they run every query against the `simple_bank` database at `postgresql://root:root@localhost:5432/simple_bank?sslmode=disable`, which is set in `db/sqlc/main_test.go`. Start the database and apply the migrations first (see [Getting Started](#getting-started)), then run:
+The tests in `db/sqlc` are integration tests: they run every query against the database at `DB_SOURCE` from `app.env` (see [Configuration](#configuration)). Start the database, apply the migrations, and create `app.env` first (see [Getting Started](#getting-started)), then run:
 
 ```sh
 make test
@@ -287,6 +316,8 @@ Tests create accounts, entries, and transfers with random data from the `util` p
 
 `.github/workflows/test.yml` runs on every push and pull request to `main`. It starts a `postgres:alpine` service with the `simple_bank` database, installs golang-migrate v4.20.1, runs `make migrateup`, and then runs `make test`.
 
+The workflow does not create `app.env`. Because the file is not committed and `LoadConfig` requires it, `make test` fails in CI until the workflow provides one.
+
 ## Current Status
 
 - Schema, migrations, Go module, and CRUD queries for accounts, entries, and transfers are in place.
@@ -294,4 +325,4 @@ Tests create accounts, entries, and transfers with random data from the `util` p
 - An HTTP API can create, get, and list accounts.
 - All queries and `TransferTx` have integration tests, which run in CI. The HTTP API has no tests yet.
 - There are no API endpoints yet for transfers, entries, updating, or deleting accounts.
-- The database address and server address are hard-coded in `main.go` and `db/sqlc/main_test.go`.
+- The CI workflow does not provide `app.env` yet, so the tests fail in CI.
