@@ -12,6 +12,7 @@ Module path: `github.com/hosseinbanaei/simaplebank`
 - Money transfer that records the transfer, both entries, and both balance updates in one database transaction
 - HTTP JSON API built with [Gin](https://github.com/gin-gonic/gin) for creating, getting, and listing accounts
 - Integration tests for every query, run against a real PostgreSQL database
+- HTTP API tests that use a mocked store generated with [gomock](https://github.com/golang/mock)
 - GitHub Actions workflow that runs the migrations and tests on every push and pull request to `main`
 - Configuration loaded from an `app.env` file or environment variables with [Viper](https://github.com/spf13/viper)
 - Makefile targets for running PostgreSQL in Docker, managing the database, running tests, and starting the server
@@ -26,7 +27,7 @@ Module path: `github.com/hosseinbanaei/simaplebank`
 | Query generation | sqlc (v1.31.1)            |
 | HTTP framework   | [Gin](https://github.com/gin-gonic/gin) v1.12.0 |
 | Database driver  | [lib/pq](https://github.com/lib/pq) |
-| Testing          | Go `testing` + [testify](https://github.com/stretchr/testify) |
+| Testing          | Go `testing` + [testify](https://github.com/stretchr/testify) + [gomock](https://github.com/golang/mock) v1.6.0 |
 | Configuration    | [Viper](https://github.com/spf13/viper) v1.21.0 |
 | Task runner      | Make                      |
 | CI               | GitHub Actions            |
@@ -44,11 +45,14 @@ Module path: `github.com/hosseinbanaei/simaplebank`
 ├── sqlc.yml                 # sqlc configuration
 ├── api/
 │   ├── server.go            # Gin router and route registration
-│   └── account.go           # Account handlers
+│   ├── account.go           # Account handlers
+│   └── account_test.go      # Account handler tests with a mocked store
 ├── util/
 │   ├── config.go            # Loads configuration with Viper
 │   └── random.go            # Random test data helpers
 └── db/
+    ├── mock/
+    │   └── store.go         # Generated mock of Store (mockgen)
     ├── migration/           # SQL migrations (golang-migrate)
     │   ├── 000001_init_schema.up.sql
     │   └── 000001_init_schema.down.sql
@@ -59,10 +63,11 @@ Module path: `github.com/hosseinbanaei/simaplebank`
     └── sqlc/                # Generated Go code (*.sql.go, db.go, models.go) and tests
         ├── db.go
         ├── models.go
+        ├── querier.go       # Generated Querier interface
         ├── account.sql.go
         ├── entry.sql.go
         ├── transfer.sql.go
-        ├── store.go         # Store with transaction support and TransferTx
+        ├── store.go         # Store interface and SQLStore with TransferTx
         ├── main_test.go     # Opens the test database connection
         ├── account_test.go
         ├── entry_test.go
@@ -88,6 +93,7 @@ Module path: `github.com/hosseinbanaei/simaplebank`
 - [Go](https://go.dev/dl/) 1.27.1 or later
 - [golang-migrate CLI](https://github.com/golang-migrate/migrate/tree/master/cmd/migrate)
 - [sqlc](https://docs.sqlc.dev/en/latest/overview/install.html)
+- [mockgen](https://github.com/golang/mock) v1.6.0, only to regenerate the mock store: `go install github.com/golang/mock/mockgen@v1.6.0`
 - `make`
 
 ## Getting Started
@@ -147,6 +153,7 @@ SERVER_ADDRESS=0.0.0.0:4000
 | `make sqlc`        | Regenerate Go code from `db/query` with sqlc        |
 | `make test`        | Run all tests with verbose output and coverage      |
 | `make server`      | Start the HTTP server on port 4000                  |
+| `make mock`        | Regenerate the mock `Store` in `db/mock` with mockgen |
 
 ## HTTP API
 
@@ -261,9 +268,11 @@ account, err := queries.CreateAccount(ctx, db.CreateAccountParams{
 
 ## Transactions
 
-`db/sqlc/store.go` defines `Store`, which embeds `*Queries` (so every query is available on it) and adds transaction support:
+`db/sqlc/store.go` defines the `Store` interface, which embeds the sqlc-generated `Querier` interface (`emit_interface` in `sqlc.yml`) and adds `TransferTx`. The API server depends on this interface, so tests can replace it with the mock in `db/mock`. Run `make mock` after changing `Store` or the queries.
 
-- `NewStore(db *sql.DB)` creates a store from a database connection.
+`SQLStore` is the PostgreSQL implementation. It embeds `*Queries` (so every query is available on it) and adds transaction support:
+
+- `NewStore(db *sql.DB)` creates a `SQLStore` from a database connection and returns it as a `Store`.
 - `execTx` runs a function with a `*Queries` bound to a new transaction. It commits if the function succeeds and rolls back if it returns an error.
 - `TransferTx` moves `amount` from `FromAccountID` to `ToAccountID` in a single transaction. It:
   1. creates a `transfers` row,
@@ -303,6 +312,10 @@ make test
 
 Tests create accounts, entries, and transfers with random data from the `util` package and do not clean them up afterwards, so use a local development database only.
 
+The tests in `api` do not need a database: they run the Gin router against the mock store from `db/mock`. `api/account_test.go` checks that `GET /accounts/:id` calls `GetAccount` once with the requested ID and returns `200 OK`.
+
+Database tests in `db/sqlc`:
+
 | Test file          | Covers                                                                  |
 | ------------------ | ----------------------------------------------------------------------- |
 | `account_test.go`  | Create, get, update, delete, and list accounts                          |
@@ -319,5 +332,6 @@ Tests create accounts, entries, and transfers with random data from the `util` p
 - Schema, migrations, Go module, and CRUD queries for accounts, entries, and transfers are in place.
 - `TransferTx` performs a money transfer in a single transaction.
 - An HTTP API can create, get, and list accounts.
-- All queries and `TransferTx` have integration tests, which run in CI. The HTTP API has no tests yet.
+- All queries and `TransferTx` have integration tests, which run in CI.
+- The HTTP API is tested with a mocked store; only the successful `GET /accounts/:id` case is covered so far.
 - There are no API endpoints yet for transfers, entries, updating, or deleting accounts.
